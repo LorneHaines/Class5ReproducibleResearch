@@ -1,0 +1,223 @@
+# Impact of Severe Weather Events
+
+
+## Synopsis
+
+The analysis below looks at severe weather data collected by the national 
+weather service from 1950 to 2011.  The goal of our investigation is two answer two
+essential questions
+
+1) Which types of events are most harmful to population health?
+2) Which types of events have the greatest economic consequences?
+
+In the investigation we aimed to answer the health component by finding the totals of 
+injuries and fatalities resulting from severe weather events.  We then found totals
+for property and crop damage to address the economic consequences.
+
+The results were interpreted by ordering the sums and plotting them on bar graphs
+that show the amount of impact each type of event has.
+
+## Data Processing
+
+### Loading in Data
+The data is loaded in from its URL and orignally came from the National Weather
+Service.  The function bzfile is required to decompress the csv file.
+
+``` {r downloaddata, echo = TRUE, cache = TRUE}
+setwd("F:/Coursera/Course 5 Reproducible Research/Project 2")
+
+download.file(url = "https://d396qusza40orc.cloudfront.net/repdata%2Fdata%2FStormData.csv.bz2",  
+              destfile = "Storm_Data.csv.bz2")
+Storm_Data <- read.csv(bzfile(("Storm_Data.csv.bz2")))
+```
+
+### Trimming Data to Parameters of Interest
+
+Observations that do not have a valid severe weather event type are removed.
+If the parameters of interest relating to health and financial damage are all
+zero then those observations are removed.
+
+``` {r trim_data, echo = TRUE, cache = TRUE}
+Storm_Data <- subset(Storm_Data, EVTYPE != '?')
+Storm_Data <- subset(Storm_Data, FATALITIES > 0 | INJURIES > 0 | PROPDMG > 0 | CROPDMG > 0)
+```
+
+### Scaling Property and Crop Damage into dollar amounts.  
+
+The economic data needs to be processed more, because its the dollar amounts for 
+property and crop damage are stored in 4 different columns instead of just 2.  Each
+type of loss includes a column for the type of loss(stored in PROPDMG & CROPDMG respectively)
+and a column with a character representing the scale of that value (PROPDMGEXP & CROPDMGEXP).
+
+PROPDMGEXP and CROPDMG are represented with a collection of characters and numbers that 
+represent the exponents that scale the damage columns.  To scale the Property and Crop Damage 
+amounts into actual dollars, we had to replace these symbols with powers of 10 then multiply
+the PROPDMG & CROPDMG variables by these scalars (stored in prop_dollars_key & crop_dollars_key).
+The new dollar amounts are stored in PROPLOSSDOLL and CROPLOSSDOLL columns of the dataset.
+
+``` {r dollardamage, echo = TRUE}
+# examining all property damage exponenets
+unique(Storm_Data$PROPDMGEXP)
+# examining property damage exponents
+unique(Storm_Data$CROPDMGEXP)
+
+# making all exponents upercase
+Storm_Data$PROPDMGEXP <- toupper(Storm_Data$PROPDMGEXP)
+Storm_Data$CROPDMGEXP <- toupper(Storm_Data$CROPDMGEXP)
+
+######### Property Damage ############
+# Making conversion key to convert exponents to dollar amounts
+prop_dollars_key <- c("0" = 10^0, "1" = 10, "2" = 10^2, "3" = 10^3, "4" = 10^4, "5" = 10^5,
+                      "6" = 10^6, "7" = 10^7, "8" = 10^8, "9" = 10^9, 
+                      "H" = 10^2, "K" = 10^3, "M" = 10^6, "B" = 10^9)
+
+# Replacing symbols for exponents of property damage with numeric values
+Storm_Data$PROPDMGEXP <- prop_dollars_key[Storm_Data$PROPDMGEXP]
+# if no symbol is present we will multiply by 1
+Storm_Data$PROPDMGEXP[is.na(Storm_Data$PROPDMGEXP)] <- 1
+
+# Calculating property damage in dollars and replacing the old scaled value
+Storm_Data$PROPLOSSDOLL <- (Storm_Data$PROPDMG * Storm_Data$PROPDMGEXP)
+
+######### Crop Damage ############
+# Making conversion key to convert exponents to dollar amounts
+crop_dollars_key <- c("?" = 1, "0" = 1, "K" = 10^3, "M" = 10^6, "B" = 10^9)
+
+# Replacing symbols for exponents of crop damage with numeric values
+Storm_Data$CROPDMGEXP <- crop_dollars_key[Storm_Data$CROPDMGEXP]
+# if no symbol is present we will multiply by 1
+Storm_Data$CROPDMGEXP[is.na(Storm_Data$CROPDMGEXP)] <- 1
+
+#Calculating property damage in dollars and replacing the old scaled value
+Storm_Data$CROPLOSSDOLL <- (Storm_Data$CROPDMG * Storm_Data$CROPDMGEXP)
+```
+
+### Which types of Events are Most Harmful to Population Health
+The data needs to farther processed in order to get injury and fatalities totals.  This 
+will allow us to answer the question of which events are most harmful to population health.
+
+This process involves aggredating the data by event type for both fatality and injury data, 
+and summing the corresponding observations.  Once we have sums for each event type, a new 
+variable is created to give us totals of injuries and fatalites.  This new information will
+help us to better determine which event is the most dangerous.
+
+``` {r sumfatalinjury, echo = TRUE}
+library(plyr)
+# Fatlity
+total_event_fatality <- aggregate(FATALITIES ~ EVTYPE, data = Storm_Data, sum)
+total_event_fatality <- arrange(total_event_fatality, desc(FATALITIES))
+
+# Injuries
+total_event_injuries <- aggregate(INJURIES ~ EVTYPE, data = Storm_Data, sum)
+total_event_injuries <- arrange(total_event_injuries, desc(INJURIES))
+
+# creating a dataset with fatalities and  injuries
+Population_Health <- merge(total_event_fatality, total_event_injuries, by = "EVTYPE")
+# create a variable with the total number of injuries and fatalities for each event
+Population_Health$TOTAL <- Population_Health$FATALITIES + Population_Health$INJURIES
+
+# Ordering health data by total of injury and fatality
+Population_Health <- arrange(Population_Health, desc(TOTAL))
+head(Population_Health)
+```
+After looking at the sorted data, we have a pretty good Idea that tornados, excessive heat, 
+and thunderstorm winds are the most dangerous to human health.
+
+### Which types of events have the greatest economic consequences?
+
+Similar to the health information, the data needs to farther processed in order to 
+allow us to answer the question of which events have the greatest economic consequences.
+
+This process involves aggredating the data by event type for both crop damage and property
+damage, and summing the corresponding observations.  Once we have sums for each event type, 
+a new variable is created to give us the total of crop damage and property damage together.  
+This new information will help us to better determine which event is the most dangerous.
+
+``` {r ecoconsequences, echo = TRUE}
+# Economic Consequences
+#property
+total_prop_dmg <- aggregate(PROPLOSSDOLL ~ EVTYPE, data = Storm_Data, sum)
+total_prop_dmg <- arrange(total_prop_dmg, desc(PROPLOSSDOLL))
+
+# crops
+total_crop_dmg <- aggregate(CROPLOSSDOLL ~ EVTYPE, data = Storm_Data, sum)
+total_crop_dmg <- arrange(total_crop_dmg, desc(CROPLOSSDOLL))
+
+# creating a dataset with crop losses and property losses
+Money_Loss <- merge(total_prop_dmg, total_crop_dmg, by = "EVTYPE")
+# create a variable with the total amount of property and crop losses
+Money_Loss$ECONOMICLOSSES <- Money_Loss$PROPLOSSDOLL + Money_Loss$CROPLOSSDOLL
+
+# Ordering economic data
+Money_Loss <- arrange(Money_Loss, desc(ECONOMICLOSSES))
+head(Money_Loss)
+```
+After looking at the sorted data, we have a pretty good Idea that Floods, Hurricane,
+and Tornadoes are the most dangerous to properties and crops.
+
+## Results
+### Events Most Harmful to Population Health
+The graph created below helps us to determine what events are most harmful to population health.
+To create the graph the top 10 event types for total health impact were used.  The injury totals, 
+fatatility totals, and overall totals were graphed for each event.
+
+``` {r HealthResults, echo = TRUE}
+
+library(ggplot2)
+library(reshape)
+#subsetting top 10 health damaging weather events
+Top_Health_Affects <- Population_Health[1:10,]
+
+# specifiy id variables and measurement variables
+Top_Health_Affects <- melt(Top_Health_Affects, id.vars="EVTYPE", variable_name = "IMPACT", 
+                           measure.vars = c("FATALITIES", "INJURIES", "TOTAL"))
+
+
+# plotting Injury, Fatality, and both totals for 10 health concerns
+Health_Plot <- ggplot(Top_Health_Affects, aes(x = reorder(EVTYPE, desc(value)), y = value, fill = IMPACT))
+
+# stat = identity so categorical value is used not frequency                
+Health_Plot + geom_bar(stat = "identity", position = "dodge") +
+        theme(axis.text.x = element_text(angle = 45, vjust = 0.5)) + 
+        xlab("Event Type") + ylab("Frequency") +
+        ggtitle("Top 10 US Storm Health Impacts")
+```
+
+The severe weather events depicted above have the greatest impact on human health.  
+Their impact decreases from left to right.  For the most part all three graphed parameters
+decrease from one event to another.  It is safe to conclude that Tornados, excessive heat, and
+thunderstorm winds have the largest imact on human health.
+
+### Events with Most Economic Impact
+
+The graph created below is simlar to the one create for human health impact.  Its goal is to 
+assist us in determining what severe weather events have the greatest economic impact.
+To create the graph the top 10 event types for total monetary damage were used.  The property damage, 
+crop damage, and overall damage totals were graphed for each event.
+
+``` {r EconomicResults, echo = TRUE}
+# property and crop damage
+Top_Money_Loss <- Money_Loss[1:10,]
+
+# specify id and measurement variables
+Top_Money_Loss <- melt(Top_Money_Loss, id.vars="EVTYPE", variable_name = "LOSSTYPE", 
+                           measure.vars = c("PROPLOSSDOLL", "CROPLOSSDOLL", "ECONOMICLOSSES"))
+
+# plotting the sum of property loss crop loss and total losses for each of top 10 event types
+Money_Plot <- ggplot(Top_Money_Loss, aes(x = reorder(EVTYPE, desc(value)), y = value, 
+                fill = factor(LOSSTYPE, labels = c("Property", "Crops", "Total"))))
+
+# stat = identity so categorical value is used not frequency, and make actual plot                
+Money_Plot + geom_bar(stat = "identity", position = "dodge") +
+        theme(axis.text.x = element_text(angle = 45, vjust = 0.5)) + 
+        xlab("Event Type") + ylab("Dollars") +
+        ggtitle("Top 10 US Storm Financial Impacts") +
+        guides(fill = guide_legend(title = "Type of Loss"))
+
+```
+
+The 10 severe weather events graphed above have the greatest fincial impacts.  Their impact decreases from left to right.  According to our graph floods, hurricanes/
+typhoons, and tornadoes have greatest total impact.  The relationship for
+property loss seems to correspond with the graph.  Crops seem to have a lower
+overall effect on the total.  Instead, other variables such as droughts, floods,
+and ice storms appear to be top contenders.
